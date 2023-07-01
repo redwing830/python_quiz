@@ -2,20 +2,7 @@ import re
 import openai
 import streamlit as st
 from supabase import create_client
-
-@st.cache_resource
-def init_connection():
-    url = st.secrets["SUPABASE_URL"]
-    key = st.secrets["SUPABASE_KEY"]
-    return create_client(url, key)
-
-def write_prompt_result(prompt, result):
-    data = supabase.table("python quiz")\
-        .insert({"prompt": prompt, "results": result})\
-        .execute()
-    print(data)
-
-supabase = init_connection()
+import threading
 
 openai.api_key = st.secrets.OPENAI_TOKEN
 openai_model_version = "gpt-3.5-turbo"
@@ -29,11 +16,42 @@ with col3:
     st.image('./data/python.png', width=100)
 
 st.markdown("<div style='text-align: center;'><h3>AI와 함께 당신의 파이썬 실력을 업그레이드하세요!</h3></div>", unsafe_allow_html=True)
-st.markdown("<div style='text-align: right;'>(Powered by gpt-3.5-turbo)</div>", unsafe_allow_html=True)
+st.markdown("<div style='text-align: right;'>(Powered by {})</div>".format(openai_model_version), unsafe_allow_html=True)
 st.write("")
 
+@st.cache_resource
+def init_connection():
+    url = st.secrets["SUPABASE_URL"]
+    key = st.secrets["SUPABASE_KEY"]
+    return create_client(url, key)
+
+def write_prompt_result(prompt, result):
+    data = supabase.table("python quiz")\
+        .insert({"prompt": prompt, "results": result})\
+        .execute()
+    print(data)
+
+def write_prompt_result_with_supabase(prompt, answer):
+    write_prompt_result(prompt, answer)
+
+supabase = init_connection()
+
 def generate_prompt(difficulty):
-    prompt = f"파이썬 학습용 4지선다형 문제를 난이도({difficulty})에 맞춰 1개 내주세요. 다음 형식에 맞 답변을 주세요. 그리고 4개의 보기는 반드시 (1) (2) (3) (4)로 시작해야 합니다.\n\n<문제>\n<보기>\n<정답>\n<해설>"
+    prompt = f'''파이썬 코드를 학습하는 데 도움을 줄 수 있는 4지선다형 문제를 {difficulty} 난이도에 맞춰 1개 생성해주세요. 억지로 만든 듯한 문제는 내지 말고, 각각의 보기가 맞고 틀리는 이유가 누가 보더라도 명쾌하고 합당해야 합니다. 문제의 난이도는 상, 중, 하 레벨에 맞춰 어렵거나 쉬워야 합니다. 아래와 같은 형식에 따라 문제와 답변을 제시해 주세요. 보기는 반드시 (1) (2) (3) (4)로 시작해야 합니다:
+<문제>
+문제 내용
+
+<보기>
+(1) 선택지 1
+(2) 선택지 2
+(3) 선택지 3
+(4) 선택지 4
+
+<정답>
+(번호)
+
+<해설>
+해설 내용'''
     return prompt.strip()
 
 def request_chat_completion(prompt):
@@ -45,24 +63,51 @@ def request_chat_completion(prompt):
     )
     return response['choices'][0]['message']['content']
 
-def parse_question(answer):
-    lines = answer.split("\n")
-    question = lines[1].strip()
-    choices_start = 3
-    choices_end = lines.index("<정답>")
-    choices_lines = lines[choices_start:choices_end]
-    choices = []
+def parse_question(question, choices, correct_answer, explanation):
+    formatted_question = format_code_blocks(question)
+    formatted_choices = format_choices(choices)
 
-    for line in choices_lines:
-        match = re.match(r"\((\d+)\) (.*)", line.strip())
-        if match:
-            choice_number = match.group(1)
-            choice_text = match.group(2)
-            choices.append((choice_number, choice_text))
+    return formatted_question, formatted_choices, correct_answer, explanation
 
-    correct_answer = re.match(r"\((\d+)\)", lines[choices_end + 1].strip()).group(1)
-    explanation = lines[-1].strip()
-    return question, choices, correct_answer, explanation
+def format_code_blocks(text):
+    in_code_block = False
+    formatted_text = ""
+
+    for line in text.split("\n"):
+        if "```" in line:
+            in_code_block = not in_code_block
+        elif in_code_block:
+            line = "    " + line
+
+        formatted_text += line + "\n"
+
+    return formatted_text.strip()
+
+def format_choices(choices_text):
+    choice_pattern = r'\(\d+\)'
+    choices = re.split(choice_pattern, choices_text)[1:]
+    formatted_choices = []
+    for i, choice in enumerate(choices):
+        formatted_choice = re.sub(r'\n+', "\n    ", choice).strip()
+        formatted_choices.append(f"({i + 1}) {formatted_choice}")
+    return formatted_choices
+
+def parse_input(answer_text):
+    question_match = re.search(r'<\s?문제\s?>\s?(.*?)<\s?보기\s?>', answer_text, re.DOTALL)
+    choices_match = re.search(r'<\s?보기\s?>\s?(.*?)<\s?정답\s?>', answer_text, re.DOTALL)
+    correct_answer_match = re.search(r'<\s?정답\s?>\s?(.*?)<\s?해설\s?>', answer_text, re.DOTALL)
+    explanation_match = re.search(r'<\s?해설\s?>\s?(.*)', answer_text, re.DOTALL)
+
+    if not question_match or not choices_match or not correct_answer_match or not explanation_match:
+        raise ValueError("Invalid input format")
+
+    question = question_match.group(1).strip()
+    choices_text = choices_match.group(1).strip()
+    correct_answer = correct_answer_match.group(1).strip()
+    explanation = explanation_match.group(1).strip()
+
+    formatted_question, formatted_choices, correct_answer, explanation = parse_question(question, choices_text, correct_answer, explanation)
+    return formatted_question, formatted_choices, correct_answer, explanation
 
 difficulty = st.selectbox("난이도 선택", ["상", "중", "하"], key="difficulty_key")
 st.write("")
@@ -76,36 +121,36 @@ if 'question' not in st.session_state:
 if 'choices' not in st.session_state:
     st.session_state.choices = []
 
-# 버튼을 누를 때
 if st.button("문제를 주세요", key="new_question_button"):
     prompt = generate_prompt(difficulty)
 
     with st.spinner('AI가 문제를 출제 중입니다'):
         answer = request_chat_completion(prompt)
-        write_prompt_result(prompt, answer)
-        question, choices, correct_answer, explanation = parse_question(answer)
+        thread = threading.Thread(target=write_prompt_result_with_supabase, args=(prompt, answer))
+        thread.start()
+        question, choices, correct_answer, explanation = parse_input(answer)
 
-    st.session_state.choices = [f"{choice[0]}. {choice[1]}" for choice in choices]
+    st.session_state.choices = [f"{choice.split(') ')[0]}) {choice.split(') ')[1]}" for choice in choices]
     st.session_state.correct_answer = correct_answer
     st.session_state.explanation = explanation
     st.session_state.question = question
     st.session_state.not_selected_yet = True
 
 if st.session_state.question:
-    st.write(f"문제: {st.session_state.question}")
+    st.markdown(f"**문제**: {st.session_state.question}")
 
     if st.session_state.choices:
-        response = st.radio("", tuple(st.session_state.choices), key="radio_choice")
-        selected_choice = response.split('.')[0] if response else ""
+        response = st.radio("보기:", tuple(f"\n{choice}" for choice in st.session_state.choices), key="radio_choice", format_func=lambda t: t, label_visibility="collapsed")
+        selected_choice = response.strip().split(') ')[0][1:] if response else ""
 
         if st.button("제출", key="submit_button"):
-            st.write(f"선택한 답: {selected_choice}")
+            st.write(f"선택한 답: ({selected_choice})")
 
-            if selected_choice == st.session_state.correct_answer:
+            if selected_choice == st.session_state.correct_answer.strip('()'):
                 st.success("정답입니다!")
             else:
                 st.warning("오답입니다.")
             st.write(f"정답: {st.session_state.correct_answer}")
-            st.write(f"해설: {st.session_state.explanation}")
+            st.markdown(f"**해설**: {st.session_state.explanation}")
 
             st.session_state.not_selected_yet = False
