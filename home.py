@@ -63,48 +63,37 @@ def request_chat_completion(prompt):
     )
     return response['choices'][0]['message']['content']
 
-def parse_question(question, choices, correct_answer, explanation):
-    formatted_question = format_code_blocks(question)
-    formatted_choices = format_choices(choices)
-
-    return formatted_question, formatted_choices, correct_answer, explanation
-
-def format_code_blocks(text):
-    in_code_block = False
-    formatted_text = ""
-
-    for line in text.split("\n"):
-        if "```" in line:
-            in_code_block = not in_code_block
-        elif in_code_block:
-            line = "    " + line
-
-        formatted_text += line + "\n"
-
-    return formatted_text.strip()
+def parse_question(question, choices_text, correct_answer, explanation):
+    formatted_choices = format_choices(choices_text)
+    return question.strip(), formatted_choices, correct_answer.strip(), explanation.strip()
 
 def format_choices(choices_text):
-    choice_pattern = r'\(\d+\)'
-    choices = re.split(choice_pattern, choices_text)[1:]
-    formatted_choices = []
-    for i, choice in enumerate(choices):
-        formatted_choice = re.sub(r'\n+', "\n    ", choice).strip()
-        formatted_choices.append(f"({i + 1}) {formatted_choice}")
+    choices = re.findall(r'\(\d[\s\S]*?(?=\(\d|\Z)', choices_text) 
+    formatted_choices = [choice.strip() for choice in choices]
+
     return formatted_choices
-
+    
 def parse_input(answer_text):
-    question_match = re.search(r'<\s?문제\s?>\s?(.*?)<\s?보기\s?>', answer_text, re.DOTALL)
-    choices_match = re.search(r'<\s?보기\s?>\s?(.*?)<\s?정답\s?>', answer_text, re.DOTALL)
-    correct_answer_match = re.search(r'<\s?정답\s?>\s?(.*?)<\s?해설\s?>', answer_text, re.DOTALL)
-    explanation_match = re.search(r'<\s?해설\s?>\s?(.*)', answer_text, re.DOTALL)
+    question_match = re.search(r'<\s?문제\s?>\s*(.*?)<\s?보기\s?>', answer_text, re.DOTALL)
+    choices_match = re.search(r'<\s?보기\s?>\s*(.*?)<\s?정답\s?>', answer_text, re.DOTALL)
+    correct_answer_match = re.search(r'<\s?정답\s?>\s?(.*?)(?:\n|<\s?해설\s?>)', answer_text, re.DOTALL)
+    explanation_match = re.search(r'<\s?해설\s?>\s*(.*)', answer_text, re.DOTALL)
 
-    if not question_match or not choices_match or not correct_answer_match or not explanation_match:
-        raise ValueError("Invalid input format")
-
-    question = question_match.group(1).strip()
-    choices_text = choices_match.group(1).strip()
-    correct_answer = correct_answer_match.group(1).strip()
-    explanation = explanation_match.group(1).strip()
+    if not question_match or not choices_match or not correct_answer_match:
+        question_part = answer_text.split('<보기>')[0].replace("문제:\n", "")
+        choices_part = answer_text.partition('<정답>')[0]
+        correct_answer_part = answer_text.partition('<정답>')[2].split('<해설>')[0].strip()
+        explanation_part = answer_text.rsplit('<해설>', maxsplit=1)[1].strip()
+        
+        question = question_part.strip()
+        choices_text = choices_part.strip()
+        correct_answer = correct_answer_part.strip()
+        explanation = explanation_part.strip()
+    else:
+        question = question_match.group(1).strip()
+        choices_text = choices_match.group(1).strip()
+        correct_answer = correct_answer_match.group(1).strip()
+        explanation = explanation_match.group(1).strip()
 
     formatted_question, formatted_choices, correct_answer, explanation = parse_question(question, choices_text, correct_answer, explanation)
     return formatted_question, formatted_choices, correct_answer, explanation
