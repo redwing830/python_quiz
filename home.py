@@ -68,24 +68,35 @@ def parse_question(question, choices_text, correct_answer, explanation):
     return question.strip(), formatted_choices, correct_answer.strip(), explanation.strip()
 
 def format_choices(choices_text):
-    choices = re.findall(r'\(\d[\s\S]*?(?=\(\d|\Z)', choices_text) 
-    formatted_choices = [choice.strip() for choice in choices]
+    choices = re.findall(r'\(\d\)(?:.*\n?)*?(?=\(\d\)|\Z)', choices_text)
+    formatted_choices = []
+
+    for choice in choices:
+        choice = re.sub("\n```python\n|\n```\n", " ", choice)
+        choice = choice.replace("```", "")
+        choice = choice.strip()
+
+        lines = choice.splitlines()
+        first_line = lines[0].rstrip()
+        other_lines = " | ".join(line.strip() for line in lines[1:] if line.strip())
+        formatted_choice = f'{first_line} {other_lines}'.lstrip()
+
+        formatted_choices.append(formatted_choice.strip())
 
     return formatted_choices
-    
+
 def parse_input(answer_text):
-    question_match = re.search(r'<\s?문제\s?>\s*(.*?)<\s?보기\s?>', answer_text, re.DOTALL)
-    choices_match = re.search(r'<\s?보기\s?>\s*(.*?)<\s?정답\s?>', answer_text, re.DOTALL)
-    correct_answer_match = re.search(r'<\s?정답\s?>\s?(.*?)(?:\n|<\s?해설\s?>)', answer_text, re.DOTALL)
-    explanation_match = re.search(r'<\s?해설\s?>\s*(.*)', answer_text, re.DOTALL)
+    question_match = re.search(r'(?i)<\s?문제\s?>[:]*\s*(.*?)<\s?보기\s?>', answer_text, re.DOTALL)
+    choices_match = re.search(r'(?i)<\s?보기\s?>[:]*\s*(.*?)<\s?정답\s?>', answer_text, re.DOTALL)
+    correct_answer_match = re.search(r'(?i)<\s?정답\s?>[:]*\s?(.*?)(?:\n|<\s?해설\s?>)', answer_text, re.DOTALL)
+    explanation_match = re.search(r'(?i)<\s?해설\s?>[:]*\s*(.*)', answer_text, re.DOTALL)
 
     if not question_match or not choices_match or not correct_answer_match:
-        question_part = answer_text.split('<보기>')[0].replace("문제:\n", "")
-        choices_part = answer_text.partition('<정답>')[0]
-        correct_answer_part = answer_text.partition('<정답>')[2].split('<해설>')[0].strip()
-        explanation_part = answer_text.rsplit('<해설>', maxsplit=1)[1].strip()
+        question_part, sep, choices_part = answer_text.partition("보기")
+        choices_part, sep, rest = choices_part.partition("정답")
+        correct_answer_part, sep, explanation_part = rest.partition("해설")
         
-        question = question_part.strip()
+        question = question_part.replace("문제:", "").strip()
         choices_text = choices_part.strip()
         correct_answer = correct_answer_part.strip()
         explanation = explanation_part.strip()
@@ -119,7 +130,7 @@ if st.button("문제를 주세요", key="new_question_button"):
         thread.start()
         question, choices, correct_answer, explanation = parse_input(answer)
 
-    st.session_state.choices = [f"{choice.split(') ')[0]}) {choice.split(') ')[1]}" for choice in choices]
+    st.session_state.choices = choices
     st.session_state.correct_answer = correct_answer
     st.session_state.explanation = explanation
     st.session_state.question = question
@@ -129,9 +140,16 @@ if st.session_state.question:
     st.markdown(f"**문제**: {st.session_state.question}")
 
     if st.session_state.choices:
-        response = st.radio("보기:", tuple(f"\n{choice}" for choice in st.session_state.choices), key="radio_choice", format_func=lambda t: t, label_visibility="collapsed")
-        selected_choice = response.strip().split(') ')[0][1:] if response else ""
-
+        response = st.radio(
+            "보기:",
+            st.session_state.choices,
+            key="radio_choice",
+            label_visibility="collapsed"
+        )
+        selected_choice = (
+            response.strip().split(") ")[0][1:] if response else ""
+        )
+        
         if st.button("제출", key="submit_button"):
             st.write(f"선택한 답: ({selected_choice})")
 
