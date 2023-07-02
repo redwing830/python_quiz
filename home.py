@@ -63,10 +63,6 @@ def request_chat_completion(prompt):
     )
     return response['choices'][0]['message']['content']
 
-def parse_question(question, choices_text, correct_answer, explanation):
-    formatted_choices = format_choices(choices_text)
-    return question.strip(), formatted_choices, correct_answer.strip(), explanation.strip()
-
 def format_choices(choices_text):
     choices = re.findall(r'\(\d\)(?:.*\n?)*?(?=\(\d\)|\Z)', choices_text)
     formatted_choices = []
@@ -88,7 +84,9 @@ def format_choices(choices_text):
 def parse_input(answer_text):
     question_match = re.search(r'(?i)<\s?문제\s?>[:]*\s*(.*?)<\s?보기\s?>', answer_text, re.DOTALL)
     choices_match = re.search(r'(?i)<\s?보기\s?>[:]*\s*(.*?)<\s?정답\s?>', answer_text, re.DOTALL)
-    correct_answer_match = re.search(r'(?i)<\s?정답\s?>[:]*\s?(.*?)(?:\n|<\s?해설\s?>)', answer_text, re.DOTALL)
+    correct_answer_match = re.search(r'(?i)<\s?정답\s?>[:]*\s*(\(\d\))', answer_text)
+    if correct_answer_match:
+        correct_answer = correct_answer_match.group(1)
     explanation_match = re.search(r'(?i)<\s?해설\s?>[:]*\s*(.*)', answer_text, re.DOTALL)
 
     if not question_match or not choices_match or not correct_answer_match:
@@ -106,8 +104,11 @@ def parse_input(answer_text):
         correct_answer = correct_answer_match.group(1).strip()
         explanation = explanation_match.group(1).strip()
 
-    formatted_question, formatted_choices, correct_answer, explanation = parse_question(question, choices_text, correct_answer, explanation)
-    return formatted_question, formatted_choices, correct_answer, explanation
+    formatted_choices = format_choices(choices_text)
+    formatted_question = question.strip()
+    formatted_correct_answer = correct_answer.strip()
+    formatted_explanation = explanation.strip()
+    return formatted_question, formatted_choices, formatted_correct_answer, formatted_explanation
 
 difficulty = st.selectbox("난이도 선택", ["상", "중", "하"], key="difficulty_key")
 st.write("")
